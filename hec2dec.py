@@ -11,3 +11,5 @@ def hex2dec_rec(s):
 
 
 print(hex2dec_rec('1ABC'))
+
+print(hex2dec_rec('CAFE'))
