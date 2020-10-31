@@ -1,12 +1,14 @@
 # maakSchermAan.py
+import serial
 
-def createWindow():
+
+def create_window():
     # Deze functie maakt het basisscherm aan waarin vervolgens alle
     # onderdelen worden geplaatst.
     # Deze zal gebruik maken van tkinter
     pass
 
-def fillWindow():
+def fill_window():
     # Deze functie neemt alle onderdelen die in het scherm geplaatst moeten worden
     # en plaatst ze erin.
     # De dingen die in het scherm moeten komen zijn:
@@ -21,21 +23,21 @@ def fillWindow():
     # - een timer op een 60 seconden cyclus die aangeeft wanneer de volgende data binnenkomt
     pass
 
-def saveData():
+def save_data():
     pass
     # een functie die de binnengekomen data opslaat zodat deze later kan worden gebruikt
     # voor het genereren van een grafiek
     # return: data in een bepaalde vorm
 
-def generateGraph(data):
+def generate_graph(data):
     pass
     # een functie die de opgeslagen data uit saveData() visueel maakt door middel van een grafiek
 
-def cycleTimer():
+def cycle_timer():
     pass
     # functie die een 60 seconden cyclus timer maakt
 
-def lookForControlUnits():
+def look_for_control_units():
     pass
     # functie die altijd draait en op zoek is naar control units om weer te geven
 
