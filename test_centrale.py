@@ -1,20 +1,23 @@
 from tkinter import *
 from functools import partial
-import numpy as np
+from matplotlib import animation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+import serial.tools.list_ports
+
 import serial
 import webbrowser
 import tkinter.font as tkFont
-import datetime
 
 
 ### WAT ER NOG MOET GEBEUREN:
 
+#   ~ DONE
 # - Binnengekomen data moet op een bepaalde manier opgeslagen worden zodat het mogelijk is voor matplotlib
 #   om er grafieken van te maken die elke zoveel seconden worden geupdate. Zie deze link:
 #   https://makersportal.com/blog/2018/2/25/python-datalogger-reading-the-serial-output-from-arduino-to-analyze-data-using-pyserial
 
+#   DONE
 # - Data voor de grafiek mag maximaal x eenheden zijn, wanneer het x + 1e datapunt binnenkomt zal het
 #   oudste worden verwijderd.
 
@@ -35,47 +38,21 @@ import datetime
 #   zij dit meegeven
 
 
-class Eenheid():
+class Eenheid(serial.Serial):
 
-    def __init__(self, name):
-        self.name = name
+    def __init__(self, port, baudrate):
+        super().__init__(port, baudrate)
+        self.data = 20 * [55]
+        self.i = 0
+        self.figure = Figure(figsize=(6, 4), dpi=100, edgecolor="red")
+        self.subplot = self.figure.add_subplot(1, 1, 1)
+        self.line, = self.subplot.plot(self.data, color='black')
+        self.subplot.set_ylim(min(self.data) - 5, max(self.data) + 5)
 
-eenheidlijst = []
+    def update_graph(self, i):
+        self.subplot.set_ylim(min(self.data) - 5, max(self.data) + 5)
+        self.line.set_data([x for x in range(len(self.data))], self.data)
 
-for i in range(8):
-    try:
-        ser = serial.Serial('COM' + str(i), 9600, timeout=0)
-
-        if isinstance(ser, serial.Serial):
-            eenheidlijst.append(ser)
-            #print("Aansluiting gevonden op COM" + str(i))
-        ser.close()
-
-    except:
-        pass
-        #print("Niets aangesloten op port COM" + str(i))
-
-
-# ser = serial.Serial('COM3', 19200)
-# eenheidlijst.append(ser)
-# string = ""
-# run = True
-# while run == True:
-#     s = ser.read()
-#     letter = str(chr(int(s.hex(), 16)))
-#     string = string + letter.rstrip()
-#     if 'KAAS' in string and len(string) > 6:
-#         string = ''
-#     if 'KAAS' == string:
-#         print(string)
-#         run = False
-
-# eenheid1 = Eenheid("1")
-# eenheid2 = Eenheid("2")
-# eenheid3 = Eenheid("3")
-#
-# for x in [eenheid1, eenheid2, eenheid3]:
-#     eenheidlijst.append(x)
 
 class Window(Frame):
 
@@ -85,7 +62,7 @@ class Window(Frame):
         self.init_window()
 
     def init_window(self):
-        global time_l
+        # global time_l
         self.master.title("Python Centrale")
 
         menu = Menu(self.master)
@@ -99,7 +76,7 @@ class Window(Frame):
 
         edit = Menu(menu, tearoff=0)
         for eenheid in eenheidlijst:
-            edit.add_command(label='Remove ' + eenheid.name, command=partial(self.remove_from_list, eenheid))
+            edit.add_command(label='Remove ' + eenheid.port, command=partial(self.remove_from_list, eenheid))
         menu.add_cascade(label='Edit', menu=edit)
 
         time_l = Label(self.master, text="", fg='pink', font=tkFont.Font(family="Comic Sans MS", size=30))
@@ -109,20 +86,17 @@ class Window(Frame):
         # spacer_begin.grid(row=0, column=0)
 
         for eenheid in eenheidlijst:
+            eenheid.i = i
             eenheid_f = Frame(self.master, height=400, width=400)
-            eenheid_f.grid(row=1, column=i+1)
+            eenheid_f.grid(row=1, column=i + 1)
             spacer_tussen = Frame(eenheid_f, height=50, width=50)
             spacer_tussen.grid(row=1, column=i * 5)
 
-            fig = Figure(figsize=(6,4), dpi=100, edgecolor="red")
-            fig.add_subplot(111).plot(np.random.normal(8000, 2500, 50))
+            # eenheid.line = eenheid.subplot.plot(eenheid.data)
 
-            canvas = FigureCanvasTkAgg(fig, master=eenheid_f)
+            canvas = FigureCanvasTkAgg(eenheid.figure, master=eenheid_f)
             canvas.draw()
-            canvas.get_tk_widget().grid(row=1, column=(i*5+1), columnspan=3)
-
-            # graph = Frame(eenheid_f, bg="#d8eded", height=300, width=400)
-            # graph.grid(row=1, column=(i * 5 + 1), columnspan=3)
+            canvas.get_tk_widget().grid(row=1, column=(i * 5 + 1), columnspan=3)
 
             b1 = Button(eenheid_f, text="In-/Uitrollen", padx=10)
             b1.grid(row=2, column=i * 5 + 1, pady=10)
@@ -130,7 +104,8 @@ class Window(Frame):
             b2 = Button(eenheid_f, text="Grafiek/Instellingen", padx=10)
             b2.grid(row=2, column=i * 5 + 2, pady=10)
 
-            b3 = Label(eenheid_f, text=eenheid.port, padx=30, pady=3.5, relief="solid", fg="white", bg="pink", font=tkFont.Font(family="Comic Sans MS", size=30))
+            b3 = Label(eenheid_f, text=eenheid.port, padx=30, pady=3.5, relief="solid", fg="white", bg="pink",
+                       font=tkFont.Font(family="Comic Sans MS", size=30))
             b3.grid(row=2, column=i * 5 + 3, pady=10)
 
             i += 1
@@ -150,9 +125,8 @@ class Window(Frame):
         self.clear_frame()
         self.init_window()
 
-        if len(self.master.grid_slaves()) == 1:
+        if len(self.master.grid_slaves()) == 2:
             self.create_menu()
-
 
     def clear_frame(self):
         for widget in root.grid_slaves():
@@ -163,18 +137,43 @@ class Window(Frame):
         menu_f.grid(row=0, column=0)
 
         spacer_links = Frame(menu_f, width=50)
-        spacer_links.grid(row=0,column=0)
-        menu_button = Button(menu_f, text="Waddup Youtuuub, Youtuuuuuuuub", command=partial(webbrowser.open,"https://www.youtube.com/watch?v=CXkG8TOJ2BY"))
+        spacer_links.grid(row=0, column=0)
+        menu_button = Button(menu_f, text="Waddup Youtuuub, Youtuuuuuuuub",
+                             command=partial(webbrowser.open, "https://www.youtube.com/watch?v=CXkG8TOJ2BY"))
         menu_button.grid(row=1, column=1)
+
 
 # def clock():
 #     time = datetime.datetime.now().strftime("%S")
 #     time_l.config(text=time)
 #     root.after(1000, clock)
 
-root = Tk()
-app = Window(root)
-#clock()
+if __name__ == '__main__':
+    eenheidlijst = []
+    for p in serial.tools.list_ports.comports():
+        if "USB Serial Device (COM" in p.description and p.serial_number is not None:
+            eenheidlijst.append(Eenheid(p.device, 19200))
 
+    # eenheidlijst.append(Eenheid('COM1', 19200))
 
-root.mainloop()
+    root = Tk()
+    app = Window(root)
+
+    while True:
+        for eenheid in eenheidlijst:
+            try:
+                # print(eenheid.read_all())
+                s = eenheid.read()
+                if len(eenheid.data) > 20:
+                    eenheid.data.pop(0)
+
+                eenheid.data.append(int(s.hex(), 16))
+
+            except:
+                print("Kan niet lezen niet, ouwe")
+
+            # eenheid.close()
+            ani = animation.FuncAnimation(fig=eenheid.figure, func=eenheid.update_graph, interval=500)
+
+        root.update_idletasks()
+        root.update()
