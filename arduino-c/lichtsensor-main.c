@@ -1,12 +1,67 @@
 #include "AVR_TTC_scheduler.h"
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/sfr_defs.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <util/delay.h>
-#define F_CPU 16000000
+#define F_CPU 16000000 // CPU amount for correct delay
+#define UBBRVAL 51 // For Output
+#define gv_echo
 
-// The array of tasks
-sTask SCH_tasks_G[SCH_MAX_TASKS];
+// For USB input and output
+void uart_init() {
+	//set baud rate
+	UBRR0H = 0;
+	UBRR0L = UBBRVAL;
+	//disable U2X mode
+	UCSR0A = 0;
+	//enable transmitter
+	UCSR0B = _BV(TXEN0);
+	//set frame format : asynchronous, 8 data bits, 1 stop bit, no parity
+	UCSR0C = _BV(UCSZ01) | _BV(UCSZ00);	
+}
 
+void transmit(uint8_t type,uint8_t data) {
+	// Type register
+	// 1. Arm length
+	// 2. Temperature
+	// 3. Light level
+	
+	// Create the transmit array
+	uint8_t transmitArr[] = { type, data };
+	
+	//wait for an empty transmit buffer
+	//UDRE is set when the transmit buffer is empty
+	loop_until_bit_is_set(UCSR0A, UDRE0);
+	//send data
+	UDR0 = data; 
+}
+
+void ports_init(void) {
+	// Sets all ports to the required input / output
+    DDRD = 0b00000000; // Make port D input 
+    DDRB = 0b11111111; // Make port B output
+	
+	PORTB = 0b00000000; // Clear port B
+	PORTD = 0b00000000; // Clear port D
+}
+
+// Lichtsensor
+void init_adc() {
+	// ref=Vcc, left adjust the result (8-bit resolution),
+	// select channel 0 (PC0 = input)
+	ADMUX = (1<<REFS0)|(1<<ADLAR);
+	// enable the ADC & prescale= 128
+	ADCSRA = (1<<ADEN)|(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0);
+}
+
+uint8_t get_adc_value() {
+	ADCSRA |= (1 << ADSC); // start conversion
+	loop_until_bit_is_clear(ADCSRA, ADSC);
+	// Save a value between 0 and 255 to sensorData.
+	return ADCH;
+}
 
 /*------------------------------------------------------------------*-
 
@@ -227,22 +282,6 @@ ISR(TIMER1_COMPA_vect)
 
 // ------------------------------------------------------------------ 
 
-
-// Declare global variables
-uint8_t i;
-uint8_t CurrentExtend;
-uint8_t MinExtend;
-uint8_t MaxExtend;
-	
-uint8_t LightLevel;
-uint8_t Temperature;
-uint8_t input;
-
-void Do_X(void)
-{
-	i = i + 1;
-}
-
 void extendSunscreen(void) {
     /* Deze functie laat het zonnescherm naar beneden.
      * Er moet een motortje runnen tot de gekozen lengte.
@@ -253,15 +292,21 @@ void extendSunscreen(void) {
 	if (CurrentExtend  < MaxExtend) {
 		for(uint8_t i = CurrentExtend; i < MaxExtend; i++) {
 			CurrentExtend++;
-			PORTD = 0b00001000;
-			_delay_ms(500); // "Expanding delay"
-			PORTD = 0b00000000;
-			_delay_ms(500); // "Expanding delay"
+			PORTB = 0b00000010;
+			_delay_ms(400); // "Expanding delay"
+			PORTB = 0b00000000;
+			_delay_ms(400); // "Expanding delay"
 
 			// TODO if Ultrasone sensor too far, stop extend!
+			// SensorDistance = getSensorDistance();
+			if (SensorDistance > 150) {
+				i = MaxExtend;
+			}
+			
 		}
 	}
-	PORTD = 0b00000100; // Max extended. Green!
+	transmit(1,CurrentExtend);
+	PORTB = 0b00000001; // Max extended. Green!
 }
 
 void withdrawSunscreen(void) {
@@ -273,29 +318,44 @@ void withdrawSunscreen(void) {
 	if (CurrentExtend > MinExtend) {
 		for(uint8_t i = CurrentExtend; MinExtend < i; i--) {
 			CurrentExtend--;
-			PORTD = 0b00001000;
-			_delay_ms(500); // "Expanding delay"
-			PORTD = 0b00000000;
-			_delay_ms(500); // "Expanding delay"
+			PORTB = 0b00000010;
+			_delay_ms(400); // "Expanding delay"
+			PORTB = 0b00000000;
+			_delay_ms(400); // "Expanding delay"
 
 			// TODO if ultrasone sensor too far back, stop extend!
+			// SensorDistance = getSensorDistance();
+			if (SensorDistance < 10) {
+				i = MinExtend;
+			}
 		}
 	}
-	PORTD = 0b00010000; // Max retracted. Red!
+	transmit(1,CurrentExtend);
+	PORTB = 0b000000100; // Max retracted. Red!
 }
 
-void CheckTemp(void)
-{
-	int Temperature;
-
-	changeOutput(1, 12);
+void checkSonor() {
+        gv_echo = BEGIN; // set flag for ISR
+        // start trigger pulse lo -> hi (D0)
+        PORTD |= _BV(0);
+        _delay_us(12); // micro sec
+        // stop trigger pulse hi -> lo (D0)
+        PORTD = 0x00;
+        // wait 30 milli sec, gv_counter == timer1 (read in ISR)
+        _delay_ms(30);
+        //cm = calc_cm(gv_counter);
 }
 
-void CheckLight(void)
-{
-	int LightLevel;
-
-	changeOutput(2, 50);
+void CheckLight(void) {
+	LightLevel = get_adc_value();
+	
+	if (LightLevel > LightLevelToggle) { // If light level is OVER 125
+		extendSunscreen();
+	} else {
+		withdrawSunscreen();
+	}
+	
+	transmit(LightLevel);
 }
 
 void CheckInput(void)
@@ -319,54 +379,59 @@ void CheckInput(void)
 	}
 }
 
+// Declare global variables
+uint8_t CurrentExtend;
+uint8_t SensorDistance;
+uint8_t MinExtend;
+uint8_t MaxExtend;
 
-void changeOutput(int type, int amount) {
-	/* 3 types of output */
-	switch(type) {
-		case 1:
-		/* output change 1: Lightlevel */
-		break;
-		case 2:
-		/* output change 2: Temperature */
-		break;
-		case 3:
-		/* output change 3*/
-		break;
-	}
-}
+uint8_t LightLevelToggle;
+uint8_t LightLevel;
+
+uint8_t Temperature;
+uint8_t input;
+
+// The array of tasks
+sTask SCH_tasks_G[SCH_MAX_TASKS];
 
 int main() {
-	i = 0;
-	CurrentExtend = 0;
-	MinExtend = 0;
-	MaxExtend = 20;
+	MinExtend = 005;
+	MaxExtend = 160;
+	CurrentExtend = 005;
+	SensorDistance = 0;
 
+	LightLevelToggle = 125; // The level at which the screen extracts / withdraws
 	LightLevel = 0;
+	
 	Temperature = 0;
 
-	DDRD = 0b11111100; // Port D2 (Pin 4 in the ATmega) made output
-	PORTD = 0b00000000; // Turn LED off
+	// Verander de benodigde poorten
+	ports_init();
+	
+	// Init input / output via usb
+	uart_init();
+
+	// Init van de lichtsensor
+	init_adc();
 
 	 // Setup data scheduler
 	SCH_Init_T1();
 	
-	// 1 = 100ms
-	// 10 = 1s
-	// 300 = 30s
-	int CheckInput_Task_ID = SCH_Add_Task(CheckInput,0,1); // Every 0.1 sec
-	int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
-	int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,300); // Every 30 sec
-
+	// 1 = 10ms || 100 = 1s || 4000 = 30s
+	// int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
+	 int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,100); // Every 30 sec
+	
+	// Debug suncreen
+		// SCH_Add_Task(extendSunscreen,0,6000); // Every 40 sec
+		// SCH_Add_Task(withdrawSunscreen,3000,6000); // Every 30 sec
+	 
 	// Test
-	SCH_Add_Task(withdrawSunscreen,0,2000);
-	SCH_Add_Task(extendSunscreen,1000,2000);
-
 	SCH_Start(); // Start scheduler
 
 	while(1) { // Infinite loop
+		CheckInput();
 		SCH_Dispatch_Tasks(); // Execute scheduled tasks
 	} // While loop end
-	
 
 	return 0;
 }
