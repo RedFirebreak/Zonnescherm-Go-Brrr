@@ -3,6 +3,8 @@
  *
  * Created: 8-11-2020 22:48:53
  * Author : Stefan
+
+ ANALOG IN A0 BRUH
  */ 
 
 #include <avr/io.h>
