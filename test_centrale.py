@@ -1,10 +1,12 @@
+import random
+import time
 from tkinter import *
 from functools import partial
 from matplotlib import animation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 import serial.tools.list_ports
-
 import serial
 import webbrowser
 import tkinter.font as tkFont
@@ -34,6 +36,7 @@ import tkinter.font as tkFont
 # - De eenheid moet ook data kunnen ontvangen zodat wanneer je op rol in / rol uit drukt de arduino dit binnenkrijgt en
 #   ervoor zorgt dat de lampjes gaan branden zoals het hoort om zo te simuleren dat het zonnescherm bezig gaat.
 
+#   ~ DONE
 # - Het type eenheid herkennen aan de hand van de aansluiting. Dit is echter afhankelijk van Stefan en Stefan hoe
 #   zij dit meegeven
 
@@ -42,16 +45,22 @@ class Eenheid(serial.Serial):
 
     def __init__(self, port, baudrate):
         super().__init__(port, baudrate)
-        self.data = 20 * [55]
+        self.data = 20 * [0]
         self.i = 0
-        self.figure = Figure(figsize=(6, 4), dpi=100, edgecolor="red")
-        self.subplot = self.figure.add_subplot(1, 1, 1)
-        self.line, = self.subplot.plot(self.data, color='black')
-        self.subplot.set_ylim(min(self.data) - 5, max(self.data) + 5)
+        self.kleur = random_kleur(kleuren)
+        self.line, = ax.plot(self.data, color=self.kleur, label=self.portstr)
+
 
     def update_graph(self, i):
-        self.subplot.set_ylim(min(self.data) - 5, max(self.data) + 5)
+        #self.subplot.set_ylim(min(self.data) - 5, max(self.data) + 5)
         self.line.set_data([x for x in range(len(self.data))], self.data)
+
+class NamedFrame(Frame):
+
+    def __init__(self, name, master, background):
+        super().__init__(master=master, bg=background)
+        self.name = name
+
 
 
 class Window(Frame):
@@ -60,120 +69,221 @@ class Window(Frame):
         Frame.__init__(self, master)
         self.master = master
         self.init_window()
+        self.minafstand = 5
+        self.maxafstand = 160
 
     def init_window(self):
-        # global time_l
-        self.master.title("Python Centrale")
+        self.master.title("Snek Central")
+
 
         menu = Menu(self.master)
-        self.master.config(menu=menu)
+        self.master.config(menu=menu, bg='gray')
 
         file = Menu(menu, tearoff=0)
-        file.add_command(label='Settings')
-        file.add_command(label='Graph')
-        file.add_command(label='Exit', command=exit)
+        file.add_command(label='About Us', command=self.create_menu)
+        file.add_command(label='Exit', command=root.destroy)
         menu.add_cascade(label='File', menu=file)
 
-        edit = Menu(menu, tearoff=0)
-        for eenheid in eenheidlijst:
-            edit.add_command(label='Remove ' + eenheid.port, command=partial(self.remove_from_list, eenheid))
-        menu.add_cascade(label='Edit', menu=edit)
+        spacer_begin = Frame(self.master, height=50, width=50, bg='gray')
+        spacer_begin.grid(row=0, column=0)
 
-        time_l = Label(self.master, text="", fg='pink', font=tkFont.Font(family="Comic Sans MS", size=30))
-        time_l.grid(row=0, column=0)
         i = 0
-        # spacer_begin = Frame(self.master, height=50, width=50)
-        # spacer_begin.grid(row=0, column=0)
+        graph_frame = NamedFrame("graph", master=self.master, background='gray')
+        graph_frame.grid(row=1, column=i+1)
 
+        canvas = FigureCanvasTkAgg(figure, master=graph_frame)
+        canvas.draw()
+        canvas.get_tk_widget().grid(row=1, column=(i * 5 + 1), columnspan=3, rowspan=8)
+
+        i = 1
         for eenheid in eenheidlijst:
-            eenheid.i = i
-            eenheid_f = Frame(self.master, height=400, width=400)
-            eenheid_f.grid(row=1, column=i + 1)
-            spacer_tussen = Frame(eenheid_f, height=50, width=50)
-            spacer_tussen.grid(row=1, column=i * 5)
-
-            # eenheid.line = eenheid.subplot.plot(eenheid.data)
-
-            canvas = FigureCanvasTkAgg(eenheid.figure, master=eenheid_f)
-            canvas.draw()
-            canvas.get_tk_widget().grid(row=1, column=(i * 5 + 1), columnspan=3)
-
-            b1 = Button(eenheid_f, text="In-/Uitrollen", padx=10)
-            b1.grid(row=2, column=i * 5 + 1, pady=10)
-
-            b2 = Button(eenheid_f, text="Grafiek/Instellingen", padx=10)
-            b2.grid(row=2, column=i * 5 + 2, pady=10)
-
-            b3 = Label(eenheid_f, text=eenheid.port, padx=30, pady=3.5, relief="solid", fg="white", bg="pink",
-                       font=tkFont.Font(family="Comic Sans MS", size=30))
-            b3.grid(row=2, column=i * 5 + 3, pady=10)
-
+            self.initialize_units(eenheid, i)
             i += 1
 
-        spacer_einde = Frame(self.master, height=50, width=50)
+        spacer_einde = Frame(self.master, height=50, width=50, bg='gray')
         spacer_einde.grid(row=0, column=100)
 
-    def remove_from_list(self, eenheid):
-        global eenheidlijst
-        temp = []
-        for x in eenheidlijst:
-            if x.port != eenheid.port:
-                temp.append(x)
+        spacer_onder = Frame(self.master, height=50, width=50, bg='gray')
+        spacer_onder.grid(row=100, column=1)
 
-        eenheidlijst = temp
+    def initialize_units(self, eenheid, i):
+        eenheid.i = i
+        eenheid_f = NamedFrame(eenheid.portstr, self.master, background='gray')
+        eenheid_f.configure(highlightbackground='black', highlightthickness=2)
+        eenheid_f.grid(row=1, column=i + 1, padx=10)
+        spacer_boven = Frame(eenheid_f, height=25, width=50, background='gray')
+        spacer_boven.grid(row=0, column=i * 5, columnspan=3)
+        spacer_tussen = Frame(eenheid_f, height=50, width=50, background='gray')
+        spacer_tussen.grid(row=1, column=i * 5)
 
-        self.clear_frame()
-        self.init_window()
+        l1 = Label(eenheid_f, text=eenheid.port, padx=30, pady=3.5, relief="solid", borderwidth='0.5', fg="black", bg="#849db5")
+        l1.grid(row=1, column=i * 5 + 1)
 
-        if len(self.master.grid_slaves()) == 2:
-            self.create_menu()
+        min_rol = Label(eenheid_f, text='Minimale rolafstand:', bg='gray')
+        min_rol.grid(row=10, column= i * 5 + 1, padx=10)
 
-    def clear_frame(self):
+        l2 = Entry(eenheid_f)
+        l2.insert(END, '5-160')
+        l2.grid(row=20, column= i * 5 + 1, padx=10)
+
+        b1 = Button(eenheid_f, text="Save", command=partial(self.set_min_uitrolafstand, l2, eenheid), relief="solid", borderwidth='0.5', fg="black", bg="#849db5")
+        b1.grid(row=20, column= i * 5 + 2)
+
+        max_rol = Label(eenheid_f, text='Maximale rolafstand:', bg='gray')
+        max_rol.grid(row=29, column=i * 5 + 1, padx=10)
+
+        l3 = Entry(eenheid_f)
+        l3.insert(END, '5-160')
+        l3.grid(row=30, column=i * 5 + 1)
+
+        b2 = Button(eenheid_f, text="Save", command=partial(self.set_max_uitrolafstand, l3, eenheid), relief="solid", borderwidth='0.5', fg="black", bg="#849db5")
+        b2.grid(row=30, column=i * 5 + 2)
+
+        b3 = Button(eenheid_f, text="Rol in / Rol uit", padx=10, relief="solid", borderwidth='0.5', fg="black", bg="#849db5")
+        b3.grid(row=40, column=i * 5 + 1, pady=10)
+
+        b4 = Button(eenheid_f, text="Destroy", padx=28, command=partial(self.clear_frame, eenheid), relief="solid", borderwidth='0.5', fg="black", bg="#849db5")
+        b4.grid(row=50, column=i * 5 + 1, pady=10)
+
+        spacer_einde = Frame(eenheid_f, height=50, width=25, bg='gray')
+        spacer_einde.grid(row=25, column=100)
+
+
+    def set_max_uitrolafstand(self, l3, eenheid):
+        afstand = l3.get()
+        if afstand.isnumeric():
+            afstand = int(afstand)
+            if 160 > afstand > self.minafstand:
+                self.maxafstand = afstand
+                #eenheid.write(self.maxafstand)
+                print(self.maxafstand)
+            else:
+                print(  "noooooob")
+        else:
+            print("nooooooooooooooooooooooooooooooob")
+
+
+    def set_min_uitrolafstand(self, l2, eenheid):
+        afstand = l2.get()
+        if afstand.isnumeric():
+            afstand = int(afstand)
+            if self.maxafstand > afstand > 5:
+                self.minafstand = afstand
+                #eenheid.write(self.minafstand)
+                print(self.minafstand)
+            else:
+                print("noooob")
+
+        else:
+            print("noooooooooooooooooooob")
+
+
+
+    def clear_frame(self, eenheid):
         for widget in root.grid_slaves():
-            widget.destroy()
+            if isinstance(widget, NamedFrame):
+                if widget.name == eenheid.portstr:
+                    widget.destroy()
+                    for eenheid in eenheidlijst:
+                        if eenheid.portstr == widget.name:
+                            anim.pop(eenheidlijst.index(eenheid))
+                            eenheidlijst.remove(eenheid)
+                            eenheid.line.remove()
+                            eenheid.__del__()
+                            ax.legend(title="Legend")
 
     def create_menu(self):
-        menu_f = Frame(self.master, height=400)
-        menu_f.grid(row=0, column=0)
+        menu_f = Toplevel(self.master, height=400)
 
         spacer_links = Frame(menu_f, width=50)
         spacer_links.grid(row=0, column=0)
-        menu_button = Button(menu_f, text="Waddup Youtuuub, Youtuuuuuuuub",
-                             command=partial(webbrowser.open, "https://www.youtube.com/watch?v=CXkG8TOJ2BY"))
-        menu_button.grid(row=1, column=1)
+
+        who_are_we = Label(master=menu_f,text="\
+        Who are we?\n We are four students currently studying IT at the Hanzehogeschool in Groningen.\n")
+        who_are_we.grid(row=1, column=1)
+
+        what_did_we_make = Label(master=menu_f, text="\
+        What did we make?\n We made a GUI using Python. This GUI controls two Arduino Uno's. \n \
+        The Arduino Uno's both control a different sensor. The sensor data is displayed in the GUI.\n \
+        With this data we can control a sunscreen.\n")
+        what_did_we_make.grid(row=2, column=1)
+
+        individuals = Label(master=menu_f, text=
+        "Individuals:\n \
+        Stefan Jilderda, 406347\n \
+        Teun de Jong, 308158\n \
+        Stefan Kuppen, 405611\n \
+        Jens Maas, 439557\n\n\n")
+        individuals.grid(row=3, column=1)
+
+        spacer_einde = Frame(menu_f, height=20, width=50)
+        spacer_einde.grid(row=0, column=100)
 
 
-# def clock():
-#     time = datetime.datetime.now().strftime("%S")
-#     time_l.config(text=time)
-#     root.after(1000, clock)
+
+
+
+def random_kleur(kleuren):
+    i = random.randint(0, len(kleuren) -1)
+    return kleuren.pop(i)
+
+def check_for_arduinos():
+    #print("check for arduinos")
+    try:
+        for p in serial.tools.list_ports.comports():
+            #print(p)
+            if "USB Serial Device (COM" in p.description and p.serial_number is not None:
+                temp_eenheid = Eenheid(p.device, 19200)
+                if temp_eenheid not in eenheidlijst:
+                    eenheidlijst.append(temp_eenheid)
+                    app.initialize_units(temp_eenheid, len(eenheidlijst) + 1)
+                    anim.append(animation.FuncAnimation(fig=figure, func=temp_eenheid.update_graph, interval=1000))
+                    ax.legend(title="Legend")
+
+    except:
+        pass
+
 
 if __name__ == '__main__':
     eenheidlijst = []
-    for p in serial.tools.list_ports.comports():
-        if "USB Serial Device (COM" in p.description and p.serial_number is not None:
-            eenheidlijst.append(Eenheid(p.device, 19200))
+    anim = []
+    kleuren = ['red', 'blue', 'black', 'green', 'brown']
+    figure = Figure(figsize=(6, 4), dpi=100, edgecolor="red")
+    figure.set_facecolor('gray')
+    ax = figure.add_subplot(1, 1, 1)
+    ax.set_ylim(0, 150)
 
-    # eenheidlijst.append(Eenheid('COM1', 19200))
+    for p in serial.tools.list_ports.comports():
+        #print(p)
+        if "USB Serial Device (COM" in p.description and p.serial_number is not None:
+            temp_eenheid = Eenheid(p.device, 19200)
+            if temp_eenheid not in eenheidlijst:
+                eenheidlijst.append(temp_eenheid)
+
+    ax.legend(title="Legend")
 
     root = Tk()
+    root.iconbitmap('snek.ico')
     app = Window(root)
+    app.configure(bg='gray')
+
+    for eenheid in eenheidlijst:
+        anim.append(animation.FuncAnimation(fig=figure, func=eenheid.update_graph, interval=1000))
+
+    i=0
 
     while True:
+        check_for_arduinos()
+
         for eenheid in eenheidlijst:
             try:
-                # print(eenheid.read_all())
                 s = eenheid.read()
                 if len(eenheid.data) > 20:
                     eenheid.data.pop(0)
-
                 eenheid.data.append(int(s.hex(), 16))
 
             except:
-                print("Kan niet lezen niet, ouwe")
-
-            # eenheid.close()
-            ani = animation.FuncAnimation(fig=eenheid.figure, func=eenheid.update_graph, interval=500)
+                pass
 
         root.update_idletasks()
         root.update()
