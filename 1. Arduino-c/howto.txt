@@ -1,0 +1,7 @@
+AVR_TTC_Scheduler.h & distance.h are both needed for both the main.
+
+Follow the instruction in the document "1. 1. Aansluiting Arduino op breadboard.docx "
+Corresponding to the right board / file.
+
+Flash lichtsensor-main.c for licht transfer (COM4 on our board)
+Flash tempsensor-main.c for temp sensor (COM5 on our board)
