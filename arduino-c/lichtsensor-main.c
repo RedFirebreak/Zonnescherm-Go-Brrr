@@ -18,6 +18,8 @@ uint8_t MinExtend;
 uint8_t MaxExtend;
 
 uint8_t LightLevelToggle;
+uint8_t LightSend;
+uint8_t LightOldLevel;
 uint8_t LightLevel;
 
 uint8_t TemperatureToggle;
@@ -442,16 +444,29 @@ void CheckLight(void) {
 	
 	// Get current light level
 	LightLevel = get_adc_value();
-	transmit(arduino,2,LightLevel);
 	
-	if (LightLevel >= LightLevelToggle) { // If light level is OVER the toggle value (default 125)
-		extendSunscreen();
-		PORTB = 0b00000001; // Max extended. Green!
-		//transmit(arduino,1,CurrentExtend);
+	if (LightSend == 0 ) {
+		// First time. No transmit
+		LightSend = 1; // Set flag to 1
+		LightOldLevel = LightLevel;
 	} else {
-		withdrawSunscreen();
-		PORTB = 0b00000100; // Max extended. Red!
-		//transmit(arduino,1,CurrentExtend);
+		// Second time!
+		// Calculate average
+		LightSend = 0; // Set flag to 0
+		uint8_t avgtemp = ((LightLevel + LightOldLevel)/2); // Get (new + old) / 2
+		
+		// Send data
+		transmit(arduino,2,avgtemp);
+		
+		if (LightLevel >= LightLevelToggle) { // If light level is OVER the toggle value (default 125)
+			extendSunscreen();
+			PORTB = 0b00000001; // Max extended. Green!
+			//transmit(arduino,1,CurrentExtend);
+			} else {
+			withdrawSunscreen();
+			PORTB = 0b00000100; // Max extended. Red!
+			//transmit(arduino,1,CurrentExtend);
+		}
 	}
 }
 
@@ -508,6 +523,8 @@ int main() {
 	SensorDistance = 255; // Max distance in CM
 
 	LightLevelToggle = 125; // The level at which the sunscreen extracts / withdraws
+	LightSend = 0; // Value to send, or not
+	LightOldLevel = 0; // Average value to be sent
 	LightLevel = 0; // Light level between 1 - 255
 	
 	TemperatureToggle = 25; // The level at which the sunscreen extracts / withdraws
@@ -529,9 +546,12 @@ int main() {
 	// Setup data scheduler
 	SCH_Init_T1();
 	
+	// Withdraw sun screen
+	withdrawSunscreen();
+	
 	// 1 = 4ms || 100 = 400ms || 1000 = 4s || 7500 = 30s || 10000 = 40s || 15000 = 60s 
 	//int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
-	int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,10000); // Every 30 sec
+	int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,7500); // Every 30 sec
 	
 	// Debug suncreen
 		 //SCH_Add_Task(extendSunscreen,0,15000); // Every 30 sec
