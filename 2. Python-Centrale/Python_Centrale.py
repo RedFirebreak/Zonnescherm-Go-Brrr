@@ -8,6 +8,14 @@ from matplotlib.figure import Figure
 import serial.tools.list_ports
 import serial
 
+# Het uitlezen van USB poorten geeft mogelijk problemen op afhankelijk
+# van of Windows op Nederlands of Engels staat.
+# Zet de juiste variabele aan afhankelijk van de taal.
+
+#Engels
+portstring = "USB Serial Device (COM" 
+#Nederlands
+#portstring = "Serieel USB-apparaat (COM"
 
 class Eenheid(serial.Serial):
     """
@@ -297,7 +305,7 @@ def check_for_arduinos():
     try:
         for p in serial.tools.list_ports.comports():
             # print(p)
-            if "Serieel USB-apparaat (COM" in p.description and p.serial_number is not None:
+            if portstring in p.description and p.serial_number is not None:
                 temp_eenheid = Eenheid(p.device, 19200)
                 if temp_eenheid not in eenheidlijst:
                     eenheidlijst.append(temp_eenheid)
@@ -370,7 +378,7 @@ if __name__ == '__main__':
 
     for p in serial.tools.list_ports.comports():
         # print(p)
-        if "Serieel USB-apparaat (COM" in p.description and p.serial_number is not None:
+        if portstring in p.description and p.serial_number is not None:
             temp_eenheid = Eenheid(p.device, 19200)
             if temp_eenheid not in eenheidlijst:
                 eenheidlijst.append(temp_eenheid)
