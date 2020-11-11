@@ -1,50 +1,89 @@
 #include "AVR_TTC_scheduler.h"
+#include "distance.h"
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sfr_defs.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <util/delay.h>
 #define F_CPU 16000000 // CPU amount for correct delay
+#include <util/delay.h>
 #define UBBRVAL 51 // For Output
-#define gv_echo
+
+// Declare global variables
+uint8_t arduino;
+
+uint8_t CurrentExtend;
+uint8_t SensorDistance;
+uint8_t MinExtend;
+uint8_t MaxExtend;
+
+uint8_t LightLevelToggle;
+uint8_t LightLevel;
+
+uint8_t TemperatureToggle;
+uint8_t Temperature;
+
+uint8_t input;
+
+// The array of tasks
+sTask SCH_tasks_G[SCH_MAX_TASKS];
+
+volatile uint16_t gv_counter; // 16 bit counter value
+volatile uint16_t gv_echo; // a flag
+
+// Init ports
+void ports_init(void) {
+	// Sets all ports to the required input / output
+	DDRB = 0xff;
+	PORTB = 0x00;
+	DDRD = 0x01; // Make port D input
+	PORTD= 0x00;
+}
 
 // For USB input and output
 void uart_init() {
-	//set baud rate
+	// set the baud rate
 	UBRR0H = 0;
 	UBRR0L = UBBRVAL;
-	//disable U2X mode
+	// disable U2X mode
 	UCSR0A = 0;
-	//enable transmitter
+	
+	// enable transmitter and receiver
+	// WERKT NIET || UCSR0B |= (1 << RXEN0) | (1 << TXEN0);
+	// WERKT NIET || UCSR0B = 0x18;
 	UCSR0B = _BV(TXEN0);
-	//set frame format : asynchronous, 8 data bits, 1 stop bit, no parity
-	UCSR0C = _BV(UCSZ01) | _BV(UCSZ00);	
+	
+	// set frame format : asynchronous, 8 data bits, 1 stop bit, no parity
+	UCSR0C = _BV(UCSZ01) | _BV(UCSZ00);
 }
 
-void transmit(uint8_t type,uint8_t data) {
-	// Type register
-	// 1. Arm length
-	// 2. Temperature
-	// 3. Light level
-	
+void transmit(uint8_t arduino,uint8_t type,uint8_t data) {
+	// Legend
+	// 0. type 
+	// 1. Current Extend
+	// 2. Light level
+	// 3. Temperature
+
 	// Create the transmit array
-	uint8_t transmitArr[] = { type, data };
+	//uint16_t transmitArr[] = { type, data };
+	
+	//wait for an empty transmit buffer
+	//UDRE is set when the transmit buffer is empty
+	loop_until_bit_is_set(UCSR0A, UDRE0);
+	//send type
+	UDR0 = arduino;
+	
+	//wait for an empty transmit buffer
+	//UDRE is set when the transmit buffer is empty
+	loop_until_bit_is_set(UCSR0A, UDRE0);
+	//send type
+	UDR0 = type; 
 	
 	//wait for an empty transmit buffer
 	//UDRE is set when the transmit buffer is empty
 	loop_until_bit_is_set(UCSR0A, UDRE0);
 	//send data
-	UDR0 = data; 
-}
-
-void ports_init(void) {
-	// Sets all ports to the required input / output
-    DDRD = 0b00000000; // Make port D input 
-    DDRB = 0b11111111; // Make port B output
-	
-	PORTB = 0b00000000; // Clear port B
-	PORTD = 0b00000000; // Clear port D
+	UDR0 = data;
 }
 
 // Lichtsensor
@@ -61,6 +100,66 @@ uint8_t get_adc_value() {
 	loop_until_bit_is_clear(ADCSRA, ADSC);
 	// Save a value between 0 and 255 to sensorData.
 	return ADCH;
+}
+
+// Sonor
+int calc_cm(int counter) {
+	// counter 0 ... 65535, f = 16 MHz
+	// prescaler = 1024 so multiply with 1024
+	// devide by 16 because FCPU = 16MHz, buildin * 1000 * 1000 for uS
+	// divide uS by 58 to convert to cm
+
+	return ((int) (counter*1024/16)/58);
+}
+
+void init_timer(void) {
+	// prescaling : max time = 2^16/16E6 = 4.1 ms, 4.1 >> 2.3, so no prescaling required
+	// normal mode, no prescale, stop timer
+	TCCR1A = 0;
+	TCCR1B = 0;
+}
+
+void init_ext_int(void) {
+	// any change triggers ext interrupt 1
+	EICRA = (1 << ISC10);
+	EIMSK = (1 << INT1);
+}
+
+uint8_t checkSonorDistance() {
+	uint8_t cm = 0;
+	
+	// Init for the distance
+	gv_echo = BEGIN; // set flag for ISR
+	// start trigger pulse lo -> hi (D0)
+	PORTD |= _BV(0);
+	_delay_us(12); // micro sec
+	// stop trigger pulse hi -> lo (D0)
+	PORTD = 0x00;
+	// wait 30 milli sec, gv_counter == timer1 (read in ISR)
+	_delay_ms(30);
+	cm = calc_cm(gv_counter);
+	
+	// Error correction. Sometimes it takes too close values at idle. Often 5-6 as absolute max.
+	if (cm < 6) {
+		cm = 255;
+	}
+	return cm;
+}
+
+ISR (INT1_vect)
+{
+	if (gv_echo == BEGIN) {
+		// set timer1 value to zero and start counting
+		// C Compiler automatically handles 16-bit I/O read/write operations in the correct order
+		TCNT1 = 0;
+		TCCR1B |= (1<<CS10) | (0<<CS11) | (1<<CS12); // set prescaler to 1024
+		// clear flag
+		gv_echo = END;
+		} else {
+		// stop counting and read value timer1
+		TCCR1B = 0;
+		gv_counter = TCNT1;
+	}
 }
 
 /*------------------------------------------------------------------*-
@@ -216,12 +315,20 @@ void SCH_Init_T1(void)
 
    // Set up Timer 1
    // Values for 1ms and 10ms ticks are provided for various crystals
-
-   // Hier moet de timer periode worden aangepast ....!
-   // uint16_t -  uint8_t
-   OCR1A = (uint16_t)625;   		     // 10ms = (256/16.000.000) * 625
-   TCCR1B = (1 << CS12) | (1 << WGM12);  // prescale op 64, top counter = value OCR1A (CTC mode)
-   TIMSK1 = 1 << OCIE1A;   		     // Timer 1 Output Compare A Match Interrupt Enable
+   //OCR1A = (uint16_t)625;   		     // 10ms = (256/16.000.000) * 625
+   //TCCR1B = (1 << CS12) | (1 << WGM12);  // prescale op 64, top counter = value OCR1A (CTC mode)
+   //TIMSK1 = 1 << OCIE1A;   		     // Timer 1 Output Compare A Match Interrupt Enable
+   
+   
+   // Set up Timer 0
+   // Values for 0.4ms
+   
+   // OCRn = 16000000/prescale/1000 * <gewenste tijd in ms>, waar OCRn een integer is en < 256
+   
+   TCCR0A |= (1 << WGM01);
+   OCR0A = (uint8_t)250;
+   TIMSK0 |= (1 << OCIE0A);
+   TCCR0B |= (1 << CS02);
 }
 
 /*------------------------------------------------------------------*-
@@ -251,48 +358,32 @@ void SCH_Start(void)
 
 -*------------------------------------------------------------------*/
 
-ISR(TIMER1_COMPA_vect)
+ISR(TIMER0_COMPA_vect)
 {
-   unsigned char Index;
-   for(Index = 0; Index < SCH_MAX_TASKS; Index++)
-   {
-      // Check if there is a task at this location
-      if(SCH_tasks_G[Index].pTask)
-      {
-         if(SCH_tasks_G[Index].Delay == 0)
-         {
-            // The task is due to run, Inc. the 'RunMe' flag
-            SCH_tasks_G[Index].RunMe += 1;
+	unsigned char Index;
+	for(Index = 0; Index < SCH_MAX_TASKS; Index++)
+	{
+		// Check if there is a task at this location
+		if(SCH_tasks_G[Index].pTask)
+		{
+			if(SCH_tasks_G[Index].Delay == 0)
+			{
+			// The task is due to run, Inc. the 'RunMe' flag
+			SCH_tasks_G[Index].RunMe += 1;
 
-            if(SCH_tasks_G[Index].Period)
-            {
-               // Schedule periodic tasks to run again
-               SCH_tasks_G[Index].Delay = SCH_tasks_G[Index].Period;
-               SCH_tasks_G[Index].Delay -= 1;
-            }
-         }
-         else
-         {
-            // Not yet ready to run: just decrement the delay
-            SCH_tasks_G[Index].Delay -= 1;
-         }
-      }
-   }
-}
-
-ISR (INT1_vect)
-{
-	if (gv_echo == BEGIN) {
-		// set timer1 value to zero and start counting
-		// C Compiler automatically handles 16-bit I/O read/write operations in the correct order
-		TCNT1 = 0;
-		TCCR1B |= (1<<CS10) | (0<<CS11) | (1<<CS12); // set prescaler to 1024
-		// clear flag
-		gv_echo = END;
-		} else {
-		// stop counting and read value timer1
-		TCCR1B = 0;
-		gv_counter = TCNT1;
+			if(SCH_tasks_G[Index].Period)
+			{
+				// Schedule periodic tasks to run again
+				SCH_tasks_G[Index].Delay = SCH_tasks_G[Index].Period;
+				SCH_tasks_G[Index].Delay -= 1;
+			}
+			}
+			else
+			{
+			// Not yet ready to run: just decrement the delay
+			SCH_tasks_G[Index].Delay -= 1;
+			}
+		}
 	}
 }
 
@@ -308,20 +399,21 @@ void extendSunscreen(void) {
 	if (CurrentExtend  < MaxExtend) {
 		for(uint8_t i = CurrentExtend; i < MaxExtend; i++) {
 			CurrentExtend++;
-			PORTB = 0b00000010;
-			_delay_ms(400); // "Expanding delay"
-			PORTB = 0b00000000;
-			_delay_ms(400); // "Expanding delay"
-
-			// TODO if Ultrasone sensor too far, stop extend!
-			// SensorDistance = getSensorDistance();
-			if (SensorDistance > 150) {
-				i = MaxExtend;
-			}
+			// IF sensor too far, stop extend!
+			SensorDistance = checkSonorDistance();
 			
+			if (SensorDistance < 10) {
+				i = MaxExtend;
+			} 
+			
+			PORTB = 0b00000010;
+			_delay_ms(50); // "Expanding delay"
+			PORTB = 0b00000000;	
+			_delay_ms(50); // "Expanding delay"
+
 		}
+		transmit(arduino,1,CurrentExtend);
 	}
-	transmit(1,CurrentExtend);
 	PORTB = 0b00000001; // Max extended. Green!
 }
 
@@ -331,119 +423,124 @@ void withdrawSunscreen(void) {
      * Het scherm mag niet verder terug getrokken worden dan 0.
      * Omdat wij geen motor hebben moeten we dit indiceren met een LEDje.
      */
-	if (CurrentExtend > MinExtend) {
+	if (CurrentExtend >= MinExtend) {
 		for(uint8_t i = CurrentExtend; MinExtend < i; i--) {
 			CurrentExtend--;
+			
 			PORTB = 0b00000010;
-			_delay_ms(400); // "Expanding delay"
+			_delay_ms(50); // "Expanding delay"
 			PORTB = 0b00000000;
-			_delay_ms(400); // "Expanding delay"
-
-			// TODO if ultrasone sensor too far back, stop extend!
-			// SensorDistance = getSensorDistance();
-			if (SensorDistance < 10) {
-				i = MinExtend;
-			}
+			_delay_ms(50); // "Expanding delay"
+			
 		}
+		transmit(arduino,1,CurrentExtend);
 	}
-	transmit(1,CurrentExtend);
 	PORTB = 0b000000100; // Max retracted. Red!
 }
 
-void checkSonor() {
-        gv_echo = BEGIN; // set flag for ISR
-        // start trigger pulse lo -> hi (D0)
-        PORTD |= _BV(0);
-        _delay_us(12); // micro sec
-        // stop trigger pulse hi -> lo (D0)
-        PORTD = 0x00;
-        // wait 30 milli sec, gv_counter == timer1 (read in ISR)
-        _delay_ms(30);
-        //cm = calc_cm(gv_counter);
-}
-
 void CheckLight(void) {
-	LightLevel = get_adc_value();
 	
-	if (LightLevel > LightLevelToggle) { // If light level is OVER 125
+	// Get current light level
+	LightLevel = get_adc_value();
+	transmit(arduino,2,LightLevel);
+	
+	if (LightLevel >= LightLevelToggle) { // If light level is OVER the toggle value (default 125)
 		extendSunscreen();
+		PORTB = 0b00000001; // Max extended. Green!
+		//transmit(arduino,1,CurrentExtend);
 	} else {
 		withdrawSunscreen();
+		PORTB = 0b00000100; // Max extended. Red!
+		//transmit(arduino,1,CurrentExtend);
 	}
-	
-	transmit(LightLevel);
 }
 
-void CheckInput(void)
-{
+void CheckInput(void) {
 /* Deze functie kijkt of er input klaar staat. En zet het om naar een extra return code. Deze code wordt meegenomen in de main-loop als "extra" actie. */
-	uint8_t input = 0b00000000; /* TODO: READ INFO FROM PORT ON MOBO */
-	switch(input)
-	{
-		case '0b00000000': /* input 1: WITHDRAW SCREEN */
-			input = 1; /* Return code for main */
-			break;
-		case '0b00000010': /* input 2: EXTEND SCREEN*/
-			input = 2; /* Return code for main */
-			break;
-		case '0b00000100': /* input 3: FORCE UPDATE? */
-			input = 3; /* Return code for main */
-			break;
-		default:
-			input = 0; /* No input */
-			break;
+	if(UCSR0A & (1 << RXC0)) {
+		
+		// Recieve the first value (code)
+		uint8_t value = UDR0; // Level of the sending
+		uint8_t input = 0;
+		
+		// Wait for second value
+		while(input == 0) {
+			if (UDR0 != value) {
+				input = UDR0;
+			}
+		}
+		
+		// Validate input between 0 and 255
+		if (input >= 0 || input	< 256) {
+			switch (value) {
+				case 1: // Set maximal extend
+					if (input > MinExtend) {
+						MaxExtend = input;
+					}
+					break;
+				case 2: // Set maximal extend 
+					if (input > MinExtend) {
+						MaxExtend = input;
+					}
+					break;
+				case 3: // Set minimum extend
+					if (input > MaxExtend) {
+						MinExtend = input;
+					}
+					break;
+				case 4: // Set light level to toggle
+					LightLevelToggle = input;
+					break;
+				case 5: // set temperature to toggle
+					TemperatureToggle = input;
+					break;
+			}
+		}
 	}
 }
-
-// Declare global variables
-uint8_t CurrentExtend;
-uint8_t SensorDistance;
-uint8_t MinExtend;
-uint8_t MaxExtend;
-
-uint8_t LightLevelToggle;
-uint8_t LightLevel;
-
-uint8_t Temperature;
-uint8_t input;
-
-// The array of tasks
-sTask SCH_tasks_G[SCH_MAX_TASKS];
 
 int main() {
-	MinExtend = 005;
-	MaxExtend = 160;
-	CurrentExtend = 005;
-	SensorDistance = 0;
-
-	LightLevelToggle = 125; // The level at which the screen extracts / withdraws
-	LightLevel = 0;
+	arduino = 1; // ID van de arduino
 	
-	Temperature = 0;
+	MinExtend = 5; // Current default minimal extend. Doesn't go below 5 (0.05m)
+	MaxExtend = 160; // Current default max extend. It doesn't go above 160. (1.60m)
+	CurrentExtend = 5; // Current default extend. Should be the same as MinExtend
+	SensorDistance = 255; // Max distance in CM
 
+	LightLevelToggle = 125; // The level at which the sunscreen extracts / withdraws
+	LightLevel = 0; // Light level between 1 - 255
+	
+	TemperatureToggle = 25; // The level at which the sunscreen extracts / withdraws
+	Temperature = 0; // Temperature in C
+	
 	// Verander de benodigde poorten
 	ports_init();
 	
 	// Init input / output via usb
 	uart_init();
+	
+	// Init sonor
+	init_timer();
+	init_ext_int();
 
 	// Init van de lichtsensor
 	init_adc();
 
-	 // Setup data scheduler
+	// Setup data scheduler
 	SCH_Init_T1();
 	
-	// 1 = 10ms || 100 = 1s || 4000 = 30s
-	// int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
-	 int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,100); // Every 30 sec
+	// 1 = 4ms || 100 = 400ms || 1000 = 4s || 7500 = 30s || 10000 = 40s || 15000 = 60s 
+	//int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
+	int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,10000); // Every 30 sec
 	
 	// Debug suncreen
-		// SCH_Add_Task(extendSunscreen,0,6000); // Every 40 sec
-		// SCH_Add_Task(withdrawSunscreen,3000,6000); // Every 30 sec
+		 //SCH_Add_Task(extendSunscreen,0,15000); // Every 30 sec
+		 //SCH_Add_Task(withdrawSunscreen,7500,15000); // Every 30 sec
 	 
 	// Test
 	SCH_Start(); // Start scheduler
 
+	//_delay_ms(50);
 	while(1) { // Infinite loop
 		CheckInput();
 		SCH_Dispatch_Tasks(); // Execute scheduled tasks
