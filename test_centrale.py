@@ -297,7 +297,7 @@ def check_for_arduinos():
     try:
         for p in serial.tools.list_ports.comports():
             # print(p)
-            if "USB Serial Device (COM" in p.description and p.serial_number is not None:
+            if "Serieel USB-apparaat (COM" in p.description and p.serial_number is not None:
                 temp_eenheid = Eenheid(p.device, 19200)
                 if temp_eenheid not in eenheidlijst:
                     eenheidlijst.append(temp_eenheid)
@@ -330,13 +330,13 @@ def configure_units(eenheid, data_binnen):
         for frame in root.winfo_children()[3:]:
             if isinstance(frame, NamedFrame):
                 if frame.name == eenheid.name:
-                    frame.winfo_children()[2].configure(text=eenheid.name + ': Temperature')
+                    frame.winfo_children()[2].configure(text=eenheid.name + ': Light')
 
     if data_binnen[0] == 2:
         for frame in root.winfo_children()[3:]:
             if isinstance(frame, NamedFrame):
                 if frame.name == eenheid.name:
-                    frame.winfo_children()[2].configure(text=eenheid.name + ': Light')
+                    frame.winfo_children()[2].configure(text=eenheid.name + ': Temperature')
 
     if data_binnen[1] == 1:
         for frame in root.winfo_children()[3:]:
@@ -370,7 +370,7 @@ if __name__ == '__main__':
 
     for p in serial.tools.list_ports.comports():
         # print(p)
-        if "USB Serial Device (COM" in p.description and p.serial_number is not None:
+        if "Serieel USB-apparaat (COM" in p.description and p.serial_number is not None:
             temp_eenheid = Eenheid(p.device, 19200)
             if temp_eenheid not in eenheidlijst:
                 eenheidlijst.append(temp_eenheid)
