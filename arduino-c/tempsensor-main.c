@@ -22,6 +22,7 @@ uint8_t LightLevel;
 
 uint8_t TemperatureToggle;
 uint8_t Temperature;
+uint8_t AverageTemp;
 
 uint8_t input;
 
@@ -449,17 +450,24 @@ void withdrawSunscreen(void) {
 	PORTB = 0b000000100; // Max retracted. Red!
 }
 
-void CheckTemp(void) {
-	
-	// Get current temperature
+void CheckTemp(void) {	// Get current temperature
 	Temperature = 0.48828125*get_adc_value(0)-50;
-	transmit(arduino,3,Temperature);
 	
-	if (Temperature >= TemperatureToggle) { // If temperature is OVER the toggle value (default 25)
+	if (AverageTemp == 0) { // Als de temperatuur 0 is, wordt de gemiddelde temperatuur de temperatuur zoals die nu is
+		AverageTemp = Temperature;
+	} else { // Anders, neem het gemiddelde
+		AverageTemp = ((AverageTemp+Temperature)/2);
+	}
+}
+
+void SendTemp(void) { // Functie om de temperatuur te verzenden en het zonnescherm naar beneden/naar boven te halen.
+	transmit(arduino,3,AverageTemp); // Stuur de data naar de COM poort
+	
+	if (AverageTemp >= TemperatureToggle) { // If temperature is OVER the toggle value (default 25)
 		extendSunscreen();
 		PORTB = 0b00000001; // Max extended. Green!
 		//transmit(arduino,1,CurrentExtend);
-	} else {
+		} else {
 		withdrawSunscreen();
 		PORTB = 0b00000100; // Max extended. Red!
 		//transmit(arduino,1,CurrentExtend);
@@ -523,6 +531,7 @@ int main() {
 	
 	TemperatureToggle = 25; // The level at which the sunscreen extracts / withdraws
 	Temperature = 0; // Temperature in C
+	AverageTemp = 0; // Average temperature between intervals
 	
 	// Verander de benodigde poorten
 	ports_init();
@@ -540,8 +549,12 @@ int main() {
 	// Setup data scheduler
 	SCH_Init_T1();
 	
+	// Eenmaal het zonnescherm terugtrekken
+	withdrawSunscreen();
+	
 	// 1 = 4ms || 100 = 400ms || 1000 = 4s || 7500 = 30s || 10000 = 40s || 15000 = 60s 
 	int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,10000); // Every 40 sec
+	int SendTemp_Task_ID = SCH_Add_Task(SendTemp,15000,15000); // Every 60 sec
 	
 	// Debug suncreen
 		 //SCH_Add_Task(extendSunscreen,0,15000); // Every 30 sec
