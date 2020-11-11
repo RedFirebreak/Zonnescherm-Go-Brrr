@@ -10,16 +10,18 @@
 #define UBBRVAL 51 // For Output
 
 // Declare global variables
-uint16_t CurrentExtend;
-uint16_t SensorDistance;
-uint16_t MinExtend;
-uint16_t MaxExtend;
+uint8_t CurrentExtend;
+uint8_t SensorDistance;
+uint8_t MinExtend;
+uint8_t MaxExtend;
 
-uint16_t LightLevelToggle;
-uint16_t LightLevel;
+uint8_t LightLevelToggle;
+uint8_t LightLevel;
 
-uint16_t Temperature;
-uint16_t input;
+uint8_t TemperatureToggle;
+uint8_t Temperature;
+
+uint8_t input;
 
 // The array of tasks
 sTask SCH_tasks_G[SCH_MAX_TASKS];
@@ -108,7 +110,7 @@ void init_ext_int(void) {
 	EIMSK = (1 << INT1);
 }
 
-uint8_t checkSonor() {
+uint8_t checkSonorDistance() {
 	uint8_t cm = 0;
 	
 	// Init for the distance
@@ -122,7 +124,11 @@ uint8_t checkSonor() {
 	_delay_ms(30);
 	cm = calc_cm(gv_counter);
 	_delay_ms(500); // wait 0.5 sec
-	transmit(1, cm);
+	
+	// Error correction. Sometimes it takes too close values at idle. Often 5-6 as absolute max.
+	if (cm < 6) {
+		cm = 255;
+	}
 	return cm;
 }
 
@@ -380,18 +386,16 @@ void extendSunscreen(void) {
 		for(uint8_t i = CurrentExtend; i < MaxExtend; i++) {
 			CurrentExtend++;
 			PORTB = 0b00000010;
-			_delay_ms(400); // "Expanding delay"
+			_delay_ms(100); // "Expanding delay"
 			PORTB = 0b00000000;
-			_delay_ms(400); // "Expanding delay"
-
-			// TODO if Ultrasone sensor too far, stop extend!
-			// SensorDistance = getSensorDistance();
-			if (SensorDistance > 150) {
+			// IF sensor too far, stop extend!
+			SensorDistance = checkSonorDistance();
+			if (SensorDistance < 10) {
 				i = MaxExtend;
 			}
-			
 		}
 	}
+	
 	transmit(1,CurrentExtend);
 	PORTB = 0b00000001; // Max extended. Green!
 }
@@ -406,15 +410,14 @@ void withdrawSunscreen(void) {
 		for(uint8_t i = CurrentExtend; MinExtend < i; i--) {
 			CurrentExtend--;
 			PORTB = 0b00000010;
-			_delay_ms(400); // "Expanding delay"
+			_delay_ms(1000); // "Expanding delay"
 			PORTB = 0b00000000;
-			_delay_ms(400); // "Expanding delay"
-
-			// TODO if ultrasone sensor too far back, stop extend!
-			// SensorDistance = getSensorDistance();
-			if (SensorDistance < 10) {
-				i = MinExtend;
-			}
+		
+			// Does this make sense tho for WITHDRAWING back to 5cm?
+// 			SensorDistance = checkSonorDistance(); // takes alot of MS!
+// 			if (SensorDistance < 10) {
+// 				i = MinExtend;
+// 			}
 		}
 	}
 	transmit(1,CurrentExtend);
@@ -423,32 +426,71 @@ void withdrawSunscreen(void) {
 
 void CheckLight(void) {
 	LightLevel = get_adc_value();
-	
 	if (LightLevel > LightLevelToggle) { // If light level is OVER 125
 		extendSunscreen();
 	} else {
 		withdrawSunscreen();
 	}
-	
-	transmit(1,LightLevel);
+	transmit(2,LightLevel);
 }
 
 void CheckInput(void)
 {
 /* Deze functie kijkt of er input klaar staat. En zet het om naar een extra return code. Deze code wordt meegenomen in de main-loop als "extra" actie. */
-	uint16_t input = 0b00000000; /* TODO: READ INFO FROM PORT ON MOBO */
+	if(UCSR0A & (1 << RXC0)) {
+		
+		// Recieve the first value (code)
+		uint8_t value = UDR0; // Level of the sending
+		uint8_t input = 0;
+		
+		// Wait for second value
+		while(input == 0) {
+			if (UDR0 != value) {
+				input = UDR0;
+			}
+		}
+		
+		// Validate input between 0 and 255
+		if (input >= 0 || input	< 256) {
+			switch (value) {
+				case 1: // Set maximal extend
+					if (input > MinExtend) {
+						MaxExtend = input;
+					}
+					break;
+				case 2: // Set maximal extend 
+					if (input > MinExtend) {
+						MaxExtend = input;
+					}
+					break;
+				case 3: // Set minimum extend
+					if (input > MaxExtend) {
+						MinExtend = input;
+					}
+					break;
+				case 4: // Set light level to toggle
+					LightLevelToggle = input;
+					break;
+				case 5: // set temperature to toggle
+					TemperatureToggle = input;
+					break;
+			}
+		}
+	}
 }
 
 int main() {
-	MinExtend = 005;
-	MaxExtend = 160;
-	CurrentExtend = 005;
-	SensorDistance = 0;
+	MinExtend = 5; // Current default minimal extend. Doesn't go below 5 (0.05m)
+	MaxExtend = 160; // Current default max extend. It doesn't go above 160. (1.60m)
+	CurrentExtend = 5; // Current default extend. Should be the same as MinExtend
+	SensorDistance = 255; // Max distance in CM
 
-	LightLevelToggle = 125; // The level at which the screen extracts / withdraws
-	LightLevel = 0;
+	LightLevelToggle = 125; // The level at which the sunscreen extracts / withdraws
+	LightLevel = 0; // Light level between 1 - 255
 	
-	Temperature = 0;
+	TemperatureToggle = 25; // The level at which the sunscreen extracts / withdraws
+	Temperature = 0; // Temperature in C
+	
 	// Verander de benodigde poorten
 	ports_init();
 	
@@ -465,18 +507,18 @@ int main() {
 	// Setup data scheduler
 	SCH_Init_T1();
 	
-	// 1 = 10ms || 100 = 1s || 4000 = 30s
-	// int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
-	//int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,100); // Every 30 sec
+	// 1 = 4ms || 100 = 400ms || 1000 = 4s || 7500 = 30s || 10000 = 40s || 15000 = 60s 
+	//int CheckTemp_Task_ID = SCH_Add_Task(CheckTemp,0,400); // Every 40 sec
+	int CheckLight_Task_ID = SCH_Add_Task(CheckLight,0,10000); // Every 30 sec
 	
 	// Debug suncreen
-	SCH_Add_Task(checkSonor,0,1); // Every 40 sec
-		// SCH_Add_Task(withdrawSunscreen,3000,6000); // Every 30 sec
+		 //SCH_Add_Task(extendSunscreen,0,15000); // Every 30 sec
+		 //SCH_Add_Task(withdrawSunscreen,7500,15000); // Every 30 sec
 	 
 	// Test
 	SCH_Start(); // Start scheduler
 
-	_delay_ms(50);
+	//_delay_ms(50);
 	while(1) { // Infinite loop
 		CheckInput();
 		SCH_Dispatch_Tasks(); // Execute scheduled tasks
